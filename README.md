@@ -22,7 +22,7 @@ git submodule update --init
 export ADF_PATH=~/esp-adf
 ```
 
-Load and run the example:
+Load the example:
 ```bash
 git clone https://github.com/d3v1c3nv11/internet_radio_demo.git
 cd internet_radio_demo
@@ -31,6 +31,8 @@ make menuconfig
 Configure the example:
 
 - Set up the Wi-Fi connection by running `menuconfig` > `Example Configuration` and filling in `WiFi SSID` and `WiFi Password`.
+
+Run the example:
 
 ```bash
 make flash monitor
