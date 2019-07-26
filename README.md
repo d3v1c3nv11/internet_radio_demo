@@ -21,15 +21,18 @@ cd esp-adf
 git submodule update --init
 export ADF_PATH=~/esp-adf
 ```
-Configure the example:
-
-- Set up the Wi-Fi connection by running `menuconfig` > `Example Configuration` and filling in `WiFi SSID` and `WiFi Password`.
 
 Load and run the example:
 ```bash
 git clone https://github.com/d3v1c3nv11/internet_radio_demo.git
 cd internet_radio_demo
 make menuconfig
+```
+Configure the example:
+
+- Set up the Wi-Fi connection by running `menuconfig` > `Example Configuration` and filling in `WiFi SSID` and `WiFi Password`.
+
+```bash
 make flash monitor
 ```
 - The audio board will first connect to the Wi-Fi.
