@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "freertos/timers.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -28,6 +29,7 @@
 #include "i2s_stream.h"
 #include "aac_decoder.h"
 #include "mp3_decoder.h"
+
 
 #include "esp_peripherals.h"
 #include "periph_touch.h"
@@ -55,8 +57,8 @@
 #define VOLUME_MUTED 10
 #define AUDIO_HAL_VOL_DEFAULT 40
 
-
-
+TimerHandle_t xTimer;
+uint8_t busy = 0;
 static const char *TAG = "INTERNET_RADIO_EXAMPLE";
 
 static const char *radio[] = {
@@ -85,6 +87,7 @@ int radio_index=0;
 	int player_volume = AUDIO_HAL_VOL_DEFAULT;
 	static struct tm* tm_info;
 static char tmp_buff[64];
+static uint8_t tune_request = 255;
 static time_t time_now, time_last = 0;
 static const char *file_fonts[3] = {"/spiffs/fonts/DotMatrix_M.fon", "/spiffs/fonts/Ubuntu.fon", "/spiffs/fonts/Grotesk24x48.fon"};
 //---------------------
@@ -103,12 +106,14 @@ static void _dispTime()
     cfont = curr_font;
 }	
 static void disp_volume(int volume){
+	TFT_resetclipwin();
+	_fg = TFT_YELLOW;
 	_height = 320;
 	_bg = (color_t){ 64, 64, 64 };
 	if (_width < 240) TFT_setFont(DEF_SMALL_FONT, NULL);
 	else TFT_setFont(DEFAULT_FONT, NULL);
-	TFT_fillRect(0, _height-TFT_getfontheight()-9, _width-1 , TFT_getfontheight()+8, _bg);
-	TFT_fillRect(0, _height-TFT_getfontheight()-9, volume * 2, TFT_getfontheight()+8, TFT_YELLOW);
+	TFT_fillRect(1, _height-TFT_getfontheight()-8, _width-2 , TFT_getfontheight()+7, _bg);
+	TFT_fillRect(1, _height-TFT_getfontheight()-8, volume * 2, TFT_getfontheight()+7, TFT_YELLOW);
 	TFT_drawRect(0, _height-TFT_getfontheight()-9, _width-1, TFT_getfontheight()+8, TFT_CYAN);
 	//TFT_print("VOLUME", CENTER, 4);
 	ESP_LOGI(TAG, "[ * ]  Volume bar set to %d",volume);
@@ -130,10 +135,19 @@ static void disp_header(char *info)
 	disp_volume(player_volume);
 
 	TFT_print(info, CENTER, 4);
+
+	for (int r = 0; r < RADIO_COUNT; r++)
+	{
+		TFT_setclipwin(0, TFT_getfontheight()+9 + 18 * r, _width-1, _height-TFT_getfontheight()-10);
+		TFT_print(radio[(r<<1)|1], CENTER, 4);
+		
+	}
+	
+	
 	//_dispTime();
 
 	_bg = TFT_BLACK;
-	TFT_setclipwin(0,TFT_getfontheight()+9, _width-1, _height-TFT_getfontheight()-10);
+	
 }	
 
 int _http_stream_event_handle(http_stream_event_msg_t *msg)
@@ -154,6 +168,10 @@ int _http_stream_event_handle(http_stream_event_msg_t *msg)
 }
 
 void tune_radio(int radio_index){
+static uint8_t curent_radio;	
+	busy = 1;
+	if (radio_index == curent_radio) return;
+	curent_radio = radio_index;
 			ESP_LOGW(TAG, "[ * ] Tune stream");
             audio_pipeline_stop(pipeline);
             audio_pipeline_wait_for_stop(pipeline);
@@ -173,8 +191,40 @@ void tune_radio(int radio_index){
                      music_info.sample_rates, music_info.bits, music_info.channels);
 			audio_element_setinfo(i2s_stream_writer, &music_info);
 			i2s_stream_set_clk(i2s_stream_writer, music_info.sample_rates, music_info.bits, music_info.channels);
+			vTaskDelay(500 / portTICK_RATE_MS);
+	busy = 0;		
 }
+ void vTimerCallback( TimerHandle_t xTimer )
+ {
 
+ uint32_t ulCount;
+
+    configASSERT( xTimer );
+
+    ulCount = ( uint32_t ) pvTimerGetTimerID( xTimer );
+    ulCount++;
+    vTimerSetTimerID( xTimer, ( void * ) ulCount );
+    
+    
+  //  gpio_set_level(get_green_led_gpio(), ulCount & 1);
+    int tx, ty, tz;        
+      if (TFT_read_touch(&tx, &ty, 0)){
+		 ESP_LOGI(TAG, "[ * ] Display TOUCH : x=%d y=%d", tx, ty);
+		 
+		 
+		 if (ty > 280) //volume
+		 {
+			if ((player_volume > 0) && (tx < 90)) player_volume--;
+			if ((player_volume < 100) && (tx > 110)) player_volume++;
+			
+			audio_hal_set_volume(board_handle->audio_hal, player_volume);
+			disp_volume(player_volume);
+		}
+		 else if (!busy) tune_request = ty / 18;
+		 
+
+		}
+ }
 void app_main(void)
 {
 	int ret;
@@ -279,31 +329,7 @@ void app_main(void)
 	
 #endif      
 
- #ifdef tft_display
-    #if USE_TOUCH == TOUCH_TYPE_STMPE610
-    
-    
-	stmpe610_Init();
-	vTaskDelay(10 / portTICK_RATE_MS);
-    uint32_t tver = stmpe610_getID();
-    ESP_LOGI(TAG, "STMPE touch initialized, ver: %04x - %02x", tver >> 8, tver & 0xFF);
-    #endif
-			disp_header(radio[((radio_index<<1)|1)]);
-			disp_volume(AUDIO_HAL_VOL_DEFAULT);
-			
-//			 while(1){
-//     int tx, ty, tz;        
-//       TFT_read_touch(&tx, &ty, 0);
-//			 ESP_LOGI(TAG, "[ * ] Display TOUCH : x=%d y=%d", tx, ty);
-		//stmpe610_get_touch(&tx, &ty, &tz);
-//		vTaskDelay(1000 / portTICK_RATE_MS);
-//	}
- #endif    
-
-
-
-
-    tcpip_adapter_init();
+     tcpip_adapter_init();
     
     ESP_LOGI(TAG, "[1.0] Initialize peripherals management");
 
@@ -394,7 +420,41 @@ void app_main(void)
     
      gpio_set_direction(get_green_led_gpio(), GPIO_MODE_OUTPUT);
      
-     
+ #ifdef tft_display
+    #if USE_TOUCH == TOUCH_TYPE_STMPE610
+    
+    
+	stmpe610_Init();
+	vTaskDelay(10 / portTICK_RATE_MS);
+    uint32_t tver = stmpe610_getID();
+    ESP_LOGI(TAG, "STMPE touch initialized, ver: %04x - %02x", tver >> 8, tver & 0xFF);
+    #endif
+			disp_header(radio[((radio_index<<1)|1)]);
+			disp_volume(AUDIO_HAL_VOL_DEFAULT);
+			
+//			 while(1){
+//     int tx, ty, tz;        
+//       TFT_read_touch(&tx, &ty, 0);
+//			 ESP_LOGI(TAG, "[ * ] Display TOUCH : x=%d y=%d", tx, ty);
+		//stmpe610_get_touch(&tx, &ty, &tz);
+//		vTaskDelay(1000 / portTICK_RATE_MS);
+//	}
+ #endif        
+   
+    xTimer = xTimerCreate
+                   ( "Timer",
+                       50 / portTICK_RATE_MS,
+                     pdTRUE,
+                     ( void * ) 0,
+                     vTimerCallback
+                   );
+              if( xTimerStart( xTimer, 0 ) != pdPASS )
+             {
+                 /* The timer could not be set into the Active
+                 state. */
+             }
+    //vTaskStartScheduler();
+   
    
      
      ESP_LOGW(TAG, "[ * ]     Touch buttons:");
@@ -409,23 +469,30 @@ void app_main(void)
  
 
     while (1) {
+		
+		
+		    
+		
         audio_event_iface_msg_t msg;
+                  
+  
         
-        
-            
-int tx, ty;        
-        if (TFT_read_touch(&tx, &ty, 0)) {
-			 ESP_LOGI(TAG, "[ * ] Display TOUCH : x=%d y=%d", tx, ty);
-		 }
-          
-        
-        
-        esp_err_t ret = audio_event_iface_listen(evt, &msg, portMAX_DELAY);
+        esp_err_t ret = audio_event_iface_listen(evt, &msg, 100 / portTICK_RATE_MS); // portMAX_DELAY);
 
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
-            gpio_set_level(get_green_led_gpio(), 0);
+			
+			  if (tune_request < RADIO_COUNT+1)
+		      { 
+				  tune_radio(tune_request);
+				  tune_request = 255;
+				  continue;
+			  } else
+			  {
+			
+            //ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
+            //gpio_set_level(get_green_led_gpio(), 0);
             continue;
+		  }
         } else gpio_set_level(get_green_led_gpio(), 1);
 
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT

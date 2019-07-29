@@ -2878,7 +2878,8 @@ int TFT_read_touch(int *x, int* y, uint8_t raw)
     	*y = Y;
     	return 1;
     }
-
+	X>>=1;
+	Y>>=1;
     // Calibrate the result
 	int tmp;
 	int xleft   = (tp_calx >> 16) & 0x3FFF;
@@ -2946,6 +2947,8 @@ int TFT_read_touch(int *x, int* y, uint8_t raw)
 				Y = tmp;
 				break;
 		}
+	Y = 319 - Y;
+	 if (X == 0) return 0;	
     #endif
 	*x = X;
 	*y = Y;

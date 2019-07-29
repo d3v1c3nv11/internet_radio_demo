@@ -565,22 +565,17 @@ static void IRAM_ATTR stmpe610_write_reg(uint8_t reg, uint8_t val) {
     spi_lobo_device_deselect(ts_spi);
 #else
     
+    int res = 0;
+    uint8_t slave_add = STMPE610_ADDR;
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    // first, send device address (indicating write) & register to be written
-    i2c_master_write_byte(cmd, STMPE610_ADDR , 1);
-    // send register we want
-    i2c_master_write_byte(cmd, reg, 1);
-    // write the data
-    i2c_master_write(cmd, &val, 1, 1);
-    i2c_master_stop(cmd);
-    esp_err_t res = i2c_master_cmd_begin(0, cmd, 1000 / portTICK_RATE_MS);
+    res |= i2c_master_start(cmd);
+    res |= i2c_master_write_byte(cmd, slave_add, 1 /*ACK_CHECK_EN*/);
+    res |= i2c_master_write_byte(cmd, reg, 1 /*ACK_CHECK_EN*/);
+    res |= i2c_master_write_byte(cmd, val, 1 /*ACK_CHECK_EN*/);
+    res |= i2c_master_stop(cmd);
+    res |= i2c_master_cmd_begin(0, cmd, 1000 / portTICK_RATE_MS);
     i2c_cmd_link_delete(cmd);
-    if (res) printf("twi_write_reg error\r\n");  
-   // printf("i2c write byte 0x%02x: 0x%02x\r\n",reg,val);
-    
-    return res;
-    
+ 
  
 #endif        
     
@@ -632,7 +627,7 @@ static uint8_t IRAM_ATTR stmpe610_read_byte(uint8_t reg) {
     i2c_master_stop(cmd);
     esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
     i2c_cmd_link_delete(cmd);
-   // printf("i2c read byte 0x%02x: 0x%02x\r\n",reg,data);
+    //printf("i2c read byte 0x%02x: 0x%02x\r\n",reg,data);
     return data;
 
 #endif     
@@ -652,7 +647,7 @@ static uint16_t IRAM_ATTR stmpe610_read_word(uint8_t reg) {
     return res;
     
  #else
- uint8_t data = 0;
+ uint8_t data[1] = {0,0};
  uint16_t regdata = 0;
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
@@ -664,15 +659,15 @@ static uint16_t IRAM_ATTR stmpe610_read_word(uint8_t reg) {
     i2c_master_start(cmd);
     // now send device address (indicating read) & read data
     i2c_master_write_byte(cmd, STMPE610_ADDR | 1, 1);
-    i2c_master_read_byte(cmd, &data, 0);
-	regdata = data;
-    i2c_master_read_byte(cmd, &data , 1);
-    regdata = regdata << 8;
-    regdata |= data;
+    i2c_master_read(cmd,(uint8_t *) data,2, 0);
+    //i2c_master_read_byte(cmd, &data[0], 1);
+    //i2c_master_read_byte(cmd, &data[1], 1);
     i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+   esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
     i2c_cmd_link_delete(cmd);
-   // printf("i2c read word 0x%02x: 0x%04x\r\n",reg,regdata);
+    regdata = data[0] | ( data[1] << 8);
+    
+  //  printf("i2c read word 0x%02x: 0x%04x\r\n",reg,regdata);
     return regdata;
 #endif      
 }
@@ -688,7 +683,7 @@ uint32_t stmpe610_getID()
 //==================
 void stmpe610_Init()
 {
-	
+
 #ifndef STMPE610_SPI
 //	i2c_init();
 #endif	
@@ -696,35 +691,35 @@ void stmpe610_Init()
 
     stmpe610_write_reg(STMPE610_REG_SYS_CTRL1, 0x02);        // Software chip reset
     vTaskDelay(10 / portTICK_RATE_MS);
- #define writeRegister8    stmpe610_write_reg
+
  
  //for (int i = 0; i<63; i++){
 //	uint8_t a = stmpe610_read_byte(i);
 	
 //}
 // printf("++++++++++++++++++++++++++++++++++++\r\n");
- 
+
     
-  writeRegister8(STMPE_SYS_CTRL2, 0x0); // turn on clocks!
-  writeRegister8(STMPE_TSC_CTRL, STMPE_TSC_CTRL_XYZ | STMPE_TSC_CTRL_EN); // XYZ and enable!
+  stmpe610_write_reg(STMPE_SYS_CTRL2, 0x0); // turn on clocks!
+  stmpe610_write_reg(STMPE_TSC_CTRL, STMPE_TSC_CTRL_XYZ | STMPE_TSC_CTRL_EN); // XYZ and enable!
   //Serial.println(readRegister8(STMPE_TSC_CTRL), HEX);
-  writeRegister8(STMPE_INT_EN, STMPE_INT_EN_TOUCHDET);
-  writeRegister8(STMPE_ADC_CTRL1, STMPE_ADC_CTRL1_10BIT | (0x6 << 4)); // 96 clocks per conversion
-  writeRegister8(STMPE_ADC_CTRL2, STMPE_ADC_CTRL2_6_5MHZ);
-  writeRegister8(STMPE_TSC_CFG, STMPE_TSC_CFG_4SAMPLE | STMPE_TSC_CFG_DELAY_1MS | STMPE_TSC_CFG_SETTLE_5MS);
-  writeRegister8(STMPE_TSC_FRACTION_Z, 0x6);
-  writeRegister8(STMPE_FIFO_TH, 1);
-  writeRegister8(STMPE_FIFO_STA, STMPE_FIFO_STA_RESET);
-  writeRegister8(STMPE_FIFO_STA, 0);    // unreset
-  writeRegister8(STMPE_TSC_I_DRIVE, STMPE_TSC_I_DRIVE_50MA);
-  writeRegister8(STMPE_INT_STA, 0xFF); // reset all ints
-  writeRegister8(STMPE_INT_CTRL, STMPE_INT_CTRL_POL_HIGH | STMPE_INT_CTRL_ENABLE);
+  stmpe610_write_reg(STMPE_INT_EN, STMPE_INT_EN_TOUCHDET);
+  stmpe610_write_reg(STMPE_ADC_CTRL1, STMPE_ADC_CTRL1_10BIT | (0x6 << 4)); // 96 clocks per conversion
+  stmpe610_write_reg(STMPE_ADC_CTRL2, STMPE_ADC_CTRL2_6_5MHZ);
+  stmpe610_write_reg(STMPE_TSC_CFG, STMPE_TSC_CFG_4SAMPLE | STMPE_TSC_CFG_DELAY_1MS | STMPE_TSC_CFG_SETTLE_5MS);
+  stmpe610_write_reg(STMPE_TSC_FRACTION_Z, 0x6);
+  stmpe610_write_reg(STMPE_FIFO_TH, 1);
+  stmpe610_write_reg(STMPE_FIFO_STA, STMPE_FIFO_STA_RESET);
+  stmpe610_write_reg(STMPE_FIFO_STA, 0);    // unreset
+  stmpe610_write_reg(STMPE_TSC_I_DRIVE, STMPE_TSC_I_DRIVE_50MA);
+  stmpe610_write_reg(STMPE_INT_STA, 0xFF); // reset all ints
+  stmpe610_write_reg(STMPE_INT_CTRL, STMPE_INT_CTRL_POL_HIGH | STMPE_INT_CTRL_ENABLE);
 
 //for (int i = 0; i<63; i++){
 //	stmpe610_read_byte(i);
 	
 //}
-/*
+    /*
     stmpe610_write_reg(STMPE610_REG_SYS_CTRL1, 0x02);        // Software chip reset
     vTaskDelay(10 / portTICK_RATE_MS);
 
@@ -746,7 +741,7 @@ void stmpe610_Init()
     stmpe610_write_reg(STMPE610_REG_TSC_CTRL, 0x31);         // X&Y&Z, 16 reading window, TSC enable
     stmpe610_write_reg(STMPE610_REG_INT_STA, 0xFF);          // Clear all interrupts
     stmpe610_write_reg(STMPE610_REG_INT_CTRL, 0x00);         // Level interrupt, disable interrupts
-*/    
+*/ 
     
     
     
@@ -755,37 +750,36 @@ void stmpe610_Init()
 //===========================================================
 int stmpe610_get_touch(uint16_t *x, uint16_t *y, uint16_t *z)
 {
+  uint8_t data[5]={0,0,0,0,0};
 
-	if (!(stmpe610_read_byte(STMPE610_REG_TSC_CTRL) & 0x80)) return 0;
-	printf("Get touch data\r\n");
-    // Get touch data
-    uint8_t fifo_size = stmpe610_read_byte(STMPE610_REG_FIFO_SIZE);
-    while (fifo_size < 2) {
-    	if (!(stmpe610_read_byte(STMPE610_REG_TSC_CTRL) & 0x80)) return 0;
-        fifo_size = stmpe610_read_byte(STMPE610_REG_FIFO_SIZE);
-    }
-    while (fifo_size > 120) {
-    	if (!(stmpe610_read_byte(STMPE610_REG_TSC_CTRL) & 0x80)) return 0;
-        *x = stmpe610_read_word(STMPE610_REG_TSC_DATA_X);
-        *y = stmpe610_read_word(STMPE610_REG_TSC_DATA_Y);
-        *z = stmpe610_read_byte(STMPE610_REG_TSC_DATA_Z);
-        fifo_size = stmpe610_read_byte(STMPE610_REG_FIFO_SIZE);
-    }
-    for (uint8_t i=0; i < (fifo_size-1); i++) {
-        *x = stmpe610_read_word(STMPE610_REG_TSC_DATA_X);
-        *y = stmpe610_read_word(STMPE610_REG_TSC_DATA_Y);
-        *z = stmpe610_read_byte(STMPE610_REG_TSC_DATA_Z);
-    }
-
-    *x = 4096 - *x;
-    /*
-    // Clear the rest of the fifo
-    {
-        stmpe610_write_reg(STMPE610_REG_FIFO_STA, 0x01);		// FIFO reset enable
-        stmpe610_write_reg(STMPE610_REG_FIFO_STA, 0x00);		// FIFO reset disable
-    }
-    */
+  uint8_t reg = 0x4d;
+  
+  if ((stmpe610_read_byte(STMPE_TSC_CTRL) & 0x80)==0) return 0;
+  
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    // first, send device address (indicating write) & register to be read
+    i2c_master_write_byte(cmd, STMPE610_ADDR, 1);
+    // send register we want
+    i2c_master_write_byte(cmd, reg, 1);
+    // Send repeated start
+    i2c_master_start(cmd);
+    // now send device address (indicating read) & read data
+    i2c_master_write_byte(cmd, STMPE610_ADDR | 1, 1);
+    i2c_master_read(cmd,(uint8_t *) data,5, 0);
+    i2c_master_stop(cmd);
+   esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+   *x = data[1];
+  *x <<= 8;
+  *x |= data[0];
+  *y = data[3];
+  *y <<= 8;
+  *y |= data[2];
+  *z = data[4];
+ 
 	return 1;
+
 }
 
 // ==== STMPE610 ===========================================================================
