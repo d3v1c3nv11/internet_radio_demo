@@ -47,10 +47,10 @@ config EXAMPLE_DISPLAY_TYPE
     default 1 if EXAMPLE_DISPLAY_TYPE1
     default 2 if EXAMPLE_DISPLAY_TYPE2
     default 3 if EXAMPLE_DISPLAY_TYPE3
-
+    default 4 if EXAMPLE_DISPLAY_TYPE4
     choice
         prompt "Select predefined display configuration"
-        default EXAMPLE_DISPLAY_TYPE2
+        default EXAMPLE_DISPLAY_TYPE4
         help
             Select predefined display configuration
     
@@ -62,6 +62,8 @@ config EXAMPLE_DISPLAY_TYPE
             bool "Adafruit TFT Feather display"
         config EXAMPLE_DISPLAY_TYPE3
             bool "M5Stack TFT display"
+        config EXAMPLE_DISPLAY_TYPE4
+            bool "Olimex MOD-LCD2.8RTP display"
     endchoice
 
 endmenu
