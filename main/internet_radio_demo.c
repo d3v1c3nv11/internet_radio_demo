@@ -61,6 +61,31 @@ TimerHandle_t xTimer;
 uint8_t busy = 0;
 static const char *TAG = "INTERNET_RADIO_EXAMPLE";
 
+
+//#define BULGARIAN
+#define NEDERLAND
+
+#ifdef BULGARIAN
+#define FORMAT_AAC
+static const char *radio[] = {
+	"http://stream.radioreklama.bg:80/radio1.aac","Radio 1",
+    "http://stream.radioreklama.bg:80/radio1rock.aac","Radio 1 Rock",	
+//	"http://193.108.24.6:8000/zrock","Z-Rock",
+	"http://stream.radioreklama.bg:80/bgradio.aac","BG Radio",
+//	"http://stream.radioreklama.bg/nrj.aac.m3u","Energy",
+	"http://stream.radioreklama.bg:80/energy-90s.aac","Energy 90s",
+	"https://bss.neterra.tv/rtplive/vitosharadio_live.stream/playlist.m3u8","Vitosha",
+	"https://bss.neterra.tv/rtplive/thevoiceradio_live.stream/playlist.m3u8","The Voice",
+	"https://bss.neterra.tv/rtplive/magicfmradio_live.stream/playlist.m3u8","Magic FM",
+//    "http://46.10.150.243:80/njoy.mp3","N-Joy",
+    "http://stream.radioreklama.bg:80/city.aac","City",	
+//    "http://darikradio.by.host.bg:8000/S2-128","Darik",
+	"http://lb.blb.cdn.bg:2032/fls/Horizont.stream/playlist.m3u8","BNR Horizont",
+	"http://lb.blb.cdn.bg:2032/fls/HrBotev.stream/playlist.m3u8","BNR Hristo Botev",
+};
+#endif
+#ifdef NEDERLAND
+#define FORMAT_AAC
 static const char *radio[] = {
 	"http://stream.slam.nl/slamaac","SLAM! Live",
     "http://playerservices.streamtheworld.com/api/livestream-redirect/TLPSTR10AAC.aac","538 Dance Radio",	
@@ -76,12 +101,21 @@ static const char *radio[] = {
     "http://playerservices.streamtheworld.com/api/livestream-redirect/SRGSTR14AAC.aac","Veronica 00's Top 500",
     "http://stream.radiocorp.nl/web10_aac","Slam! Non-Stop",
     "http://icecast.omroep.nl/radio1-bb-aac","Radio 1",
-    "http://stream.radioreklama.bg:80/city.aac","City",
 };
+#endif
+
 #define RADIO_COUNT (sizeof(radio)/sizeof(char*))/2
 int radio_index=0;
     audio_pipeline_handle_t pipeline;
-    audio_element_handle_t http_stream_reader, i2s_stream_writer, aac_decoder, mp3_decoder;
+    audio_element_handle_t i2s_stream_writer,
+#ifdef FORMAT_AAC 
+     aac_decoder,
+     #endif
+#ifdef FORMAT_MP3
+     mp3_decoder,
+#endif     
+	 http_stream_reader;
+				
     audio_board_handle_t board_handle;
     audio_event_iface_handle_t evt;
 	int player_volume = AUDIO_HAL_VOL_DEFAULT;
@@ -91,6 +125,7 @@ static uint8_t tune_request = 255;
 static time_t time_now, time_last = 0;
 static const char *file_fonts[3] = {"/spiffs/fonts/DotMatrix_M.fon", "/spiffs/fonts/Ubuntu.fon", "/spiffs/fonts/Grotesk24x48.fon"};
 //---------------------
+/*
 static void _dispTime()
 {
 	Font curr_font = cfont;
@@ -104,7 +139,7 @@ static void _dispTime()
 	TFT_print(tmp_buff, CENTER, _height-TFT_getfontheight()-5);
 
     cfont = curr_font;
-}	
+} */	
 static void disp_volume(int volume){
 	TFT_resetclipwin();
 	_fg = TFT_YELLOW;
@@ -175,7 +210,12 @@ static uint8_t curent_radio;
 			ESP_LOGW(TAG, "[ * ] Tune stream");
             audio_pipeline_stop(pipeline);
             audio_pipeline_wait_for_stop(pipeline);
+#ifdef FORMAT_AAC            
             audio_element_reset_state(aac_decoder);
+#endif
+#ifdef FORMAT_MP3
+            audio_element_reset_state(mp3_decoder);
+#endif            
             audio_element_reset_state(i2s_stream_writer);
             audio_pipeline_reset_ringbuffer(pipeline);
             audio_pipeline_reset_items_state(pipeline);
@@ -186,7 +226,12 @@ static uint8_t curent_radio;
 			//TFT_print(radio[((radio_index<<1)|1)], CENTER, CENTER);
             ESP_LOGW(TAG, "[ %s ] %s",radio[((radio_index<<1)|1)],radio[radio_index<<1]);
             audio_element_info_t music_info = {0};
+#ifdef FORMAT_AAC            
 			audio_element_getinfo(aac_decoder, &music_info);
+#endif
+#ifdef FORMAT_MP3
+			audio_element_getinfo(mp3_decoder, &music_info);
+#endif			
 			ESP_LOGI(TAG, "[ * ] Receive music info from mp3 decoder, sample_rates=%d, bits=%d, ch=%d",
                      music_info.sample_rates, music_info.bits, music_info.channels);
 			audio_element_setinfo(i2s_stream_writer, &music_info);
@@ -281,7 +326,7 @@ void app_main(void)
 #if USE_TOUCH > TOUCH_TYPE_NONE
     ESP_LOGI(TAG, " Touch CS: %d", PIN_NUM_TCS);
 #endif
-	printf("==============================\r\n\r\n");
+//	printf("==============================\r\n\r\n");
 	
 // ==================================================================
 	// ==== Initialize the SPI bus and attach the LCD to the SPI bus ====
@@ -358,6 +403,8 @@ void app_main(void)
     i2s_cfg.type = AUDIO_STREAM_WRITER;
     i2s_stream_writer = i2s_stream_init(&i2s_cfg);
 
+
+#ifdef FORMAT_AAC
     ESP_LOGI(TAG, "[2.3] Create aac decoder to decode aac file");
     aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
     aac_decoder = aac_decoder_init(&aac_cfg);
@@ -369,7 +416,20 @@ void app_main(void)
 
     ESP_LOGI(TAG, "[2.5] Link it together http_stream-->aac_decoder-->i2s_stream-->[codec_chip]");
     audio_pipeline_link(pipeline, (const char *[]) {"http",  "aac", "i2s"}, 3);
+#endif
+#ifdef FORMAT_MP3
+    ESP_LOGI(TAG, "[2.3] Create mp3 decoder to decode mp3 file");
+    mp3_decoder_cfg_t mp3_cfg = DEFAULT_MP3_DECODER_CONFIG();
+    mp3_decoder = mp3_decoder_init(&mp3_cfg);
 
+    ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
+    audio_pipeline_register(pipeline, http_stream_reader, "http");
+    audio_pipeline_register(pipeline, mp3_decoder,        "mp3");
+    audio_pipeline_register(pipeline, i2s_stream_writer,  "i2s");
+
+    ESP_LOGI(TAG, "[2.5] Link it together http_stream-->mp3_decoder-->i2s_stream-->[codec_chip]");
+    audio_pipeline_link(pipeline, (const char *[]) {"http",  "mp3", "i2s"}, 3);
+#endif
     ESP_LOGI(TAG, "[2.6] Set up  uri (http as http_stream, aac as aac decoder, and default output is i2s)");
     audio_element_set_uri(http_stream_reader, radio[radio_index]);
 
@@ -418,7 +478,7 @@ void app_main(void)
     ESP_LOGI(TAG, "[ 5 ] Start audio_pipeline");
     audio_pipeline_run(pipeline);
     
-     gpio_set_direction(get_green_led_gpio(), GPIO_MODE_OUTPUT);
+  //   gpio_set_direction(get_green_led_gpio(), GPIO_MODE_OUTPUT);
      
  #ifdef tft_display
     #if USE_TOUCH == TOUCH_TYPE_STMPE610
@@ -432,13 +492,7 @@ void app_main(void)
 			disp_header(radio[((radio_index<<1)|1)]);
 			disp_volume(AUDIO_HAL_VOL_DEFAULT);
 			
-//			 while(1){
-//     int tx, ty, tz;        
-//       TFT_read_touch(&tx, &ty, 0);
-//			 ESP_LOGI(TAG, "[ * ] Display TOUCH : x=%d y=%d", tx, ty);
-		//stmpe610_get_touch(&tx, &ty, &tz);
-//		vTaskDelay(1000 / portTICK_RATE_MS);
-//	}
+
  #endif        
    
     xTimer = xTimerCreate
@@ -481,14 +535,14 @@ void app_main(void)
 
         if (ret != ESP_OK) {
 			
-			  if (tune_request < RADIO_COUNT+1)
+			  if (tune_request < RADIO_COUNT)
 		      { 
 				  tune_radio(tune_request);
 				  tune_request = 255;
 				  continue;
 			  } else
 			  {
-			
+				tune_request = 255;
             //ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
             //gpio_set_level(get_green_led_gpio(), 0);
             continue;
