@@ -39,24 +39,35 @@
 #include "periph_wifi.h"
 #include "board.h"
 #include "periph_button.h"
+#include "equalizer.h"
+#include "audio_alc.h"
 
 #ifdef tft_display
-#define CONFIG_EXAMPLE_DISPLAY_TYPE 2
-#define SPI_BUS TFT_HSPI_HOST
 
+#define SPI_BUS TFT_HSPI_HOST
 #include "tft.h"
 #include "tftspi.h"
 
 
 #endif
 
+#define	f31Hz	0
+#define f62Hz	1
+#define	f125Hz	2
+#define	f250Hz	3
+#define	f500Hz	4
+#define	f1kHz	5
+#define	f2kHz	6
+#define	f4kHz	7
+#define	f8kHz	8
+#define	f16kHz	9
 
 #define CURRENT 0
 #define NEXT    1
-#define PRESSET_RADIO 3
+#define PRESSET_RADIO 1
 #define VOLUME_MUTED 10
-#define AUDIO_HAL_VOL_DEFAULT 40
-
+#define AUDIO_HAL_VOL_DEFAULT 60
+#define ALC_VOLUME_SET (0)
 TimerHandle_t xTimer;
 uint8_t busy = 0;
 static const char *TAG = "INTERNET_RADIO_EXAMPLE";
@@ -100,7 +111,7 @@ static const char *radio[] = {
     "http://playerservices.streamtheworld.com/api/livestream-redirect/SRGSTR13AAC.aac","Veronica 90's Hits",
     "http://playerservices.streamtheworld.com/api/livestream-redirect/SRGSTR14AAC.aac","Veronica 00's Top 500",
     "http://stream.radiocorp.nl/web10_aac","Slam! Non-Stop",
-    "http://icecast.omroep.nl/radio1-bb-aac","Radio 1",
+  //  "http://icecast.omroep.nl/radio1-bb-aac","Radio 1",
 };
 #endif
 
@@ -114,13 +125,14 @@ int radio_index=0;
 #ifdef FORMAT_MP3
      mp3_decoder,
 #endif     
-	 http_stream_reader;
+	 equalizer,alc_el, http_stream_reader;
 				
     audio_board_handle_t board_handle;
     audio_event_iface_handle_t evt;
 	int player_volume = AUDIO_HAL_VOL_DEFAULT;
 	static struct tm* tm_info;
 static char tmp_buff[64];
+static uint8_t curent_radio;
 static uint8_t tune_request = 255;
 static time_t time_now, time_last = 0;
 static const char *file_fonts[3] = {"/spiffs/fonts/DotMatrix_M.fon", "/spiffs/fonts/Ubuntu.fon", "/spiffs/fonts/Grotesk24x48.fon"};
@@ -203,7 +215,7 @@ int _http_stream_event_handle(http_stream_event_msg_t *msg)
 }
 
 void tune_radio(int radio_index){
-static uint8_t curent_radio;	
+	
 	busy = 1;
 	if (radio_index == curent_radio) return;
 	curent_radio = radio_index;
@@ -232,9 +244,16 @@ static uint8_t curent_radio;
 #ifdef FORMAT_MP3
 			audio_element_getinfo(mp3_decoder, &music_info);
 #endif			
+
+
 			ESP_LOGI(TAG, "[ * ] Receive music info from mp3 decoder, sample_rates=%d, bits=%d, ch=%d",
                      music_info.sample_rates, music_info.bits, music_info.channels);
 			audio_element_setinfo(i2s_stream_writer, &music_info);
+			
+			      alc_volume_setup_set_channel(alc_el, music_info.channels);
+            alc_volume_setup_set_volume(alc_el, ALC_VOLUME_SET);
+              	equalizer_set_info(equalizer, music_info.sample_rates, music_info.channels); 
+                         	
 			i2s_stream_set_clk(i2s_stream_writer, music_info.sample_rates, music_info.bits, music_info.channels);
 			vTaskDelay(500 / portTICK_RATE_MS);
 	busy = 0;		
@@ -278,6 +297,7 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
+    radio_index = PRESSET_RADIO;
  #ifdef tft_display
      
       // ==== Set display type
@@ -397,13 +417,27 @@ void app_main(void)
     http_cfg.type = AUDIO_STREAM_READER;
     http_cfg.enable_playlist_parser = true;
     http_stream_reader = http_stream_init(&http_cfg);
-
+    
+    
+	ESP_LOGI(TAG, "[2.11] Create equalizer");
+	equalizer_cfg_t eq_cfg = DEFAULT_EQUALIZER_CONFIG();
+    int set_gain[] = { 8, 3, 1, -2, -8, -10, -8, -7, -6, -5,  8, 3, 1, -2, -8, -10, -8, -7, -6, -5};
+    //{ -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13, -13};
+    eq_cfg.set_gain = set_gain; // The size of gain array should be the multiplication of NUMBER_BAND and number channels of audio stream data. The minimum of gain is -13 dB.
+    equalizer = equalizer_init(&eq_cfg);
+    
+    
+	ESP_LOGI(TAG, "[2.12] Create alc");
+	alc_volume_setup_cfg_t alc_cfg = DEFAULT_ALC_VOLUME_SETUP_CONFIG();
+    alc_el = alc_volume_setup_init(&alc_cfg);
+    
+    
     ESP_LOGI(TAG, "[2.2] Create i2s stream to write data to codec chip");
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
     i2s_cfg.type = AUDIO_STREAM_WRITER;
+    i2s_cfg.use_alc = false;
     i2s_stream_writer = i2s_stream_init(&i2s_cfg);
-
-
+    
 #ifdef FORMAT_AAC
     ESP_LOGI(TAG, "[2.3] Create aac decoder to decode aac file");
     aac_decoder_cfg_t aac_cfg = DEFAULT_AAC_DECODER_CONFIG();
@@ -412,10 +446,12 @@ void app_main(void)
     ESP_LOGI(TAG, "[2.4] Register all elements to audio pipeline");
     audio_pipeline_register(pipeline, http_stream_reader, "http");
     audio_pipeline_register(pipeline, aac_decoder,        "aac");
+    audio_pipeline_register(pipeline, equalizer, "equalizer");
+    audio_pipeline_register(pipeline, alc_el, "alc");
     audio_pipeline_register(pipeline, i2s_stream_writer,  "i2s");
 
-    ESP_LOGI(TAG, "[2.5] Link it together http_stream-->aac_decoder-->i2s_stream-->[codec_chip]");
-    audio_pipeline_link(pipeline, (const char *[]) {"http",  "aac", "i2s"}, 3);
+    ESP_LOGI(TAG, "[2.5] Link it together http_stream-->aac_decoder-->equalizer-->i2s_stream-->[codec_chip]");
+    audio_pipeline_link(pipeline, (const char *[]) {"http",  "aac", "equalizer","alc", "i2s"}, 5);
 #endif
 #ifdef FORMAT_MP3
     ESP_LOGI(TAG, "[2.3] Create mp3 decoder to decode mp3 file");
@@ -431,22 +467,13 @@ void app_main(void)
     audio_pipeline_link(pipeline, (const char *[]) {"http",  "mp3", "i2s"}, 3);
 #endif
     ESP_LOGI(TAG, "[2.6] Set up  uri (http as http_stream, aac as aac decoder, and default output is i2s)");
-    audio_element_set_uri(http_stream_reader, radio[radio_index]);
-
+    audio_element_set_uri(http_stream_reader, radio[radio_index << 1]);
+	curent_radio = radio_index;
     
     ESP_LOGI(TAG, "[ 3 ] Initialize peripherals");
     esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
     esp_periph_set_handle_t set = esp_periph_set_init(&periph_cfg);
 
-    
-    periph_wifi_cfg_t wifi_cfg = {
-        .ssid = CONFIG_WIFI_SSID,
-        .password = CONFIG_WIFI_PASSWORD,
-    };
-    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
-    esp_periph_start(set, wifi_handle);
-    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
-    
   
     ESP_LOGI(TAG, "[3.1] Initialize Touch peripheral");
     periph_touch_cfg_t touch_cfg = {
@@ -464,6 +491,15 @@ void app_main(void)
     esp_periph_start(set, button_handle);
     
     
+    
+    periph_wifi_cfg_t wifi_cfg = {
+        .ssid = CONFIG_WIFI_SSID,
+        .password = CONFIG_WIFI_PASSWORD,
+    };
+    esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
+    esp_periph_start(set, wifi_handle);
+    periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
+    
 
     ESP_LOGI(TAG, "[ 4 ] Set up  event listener");
     audio_event_iface_cfg_t evt_cfg = AUDIO_EVENT_IFACE_DEFAULT_CFG();
@@ -474,8 +510,9 @@ void app_main(void)
 
     ESP_LOGI(TAG, "[4.2] Listening event from peripherals");
     audio_event_iface_set_listener(esp_periph_set_get_event_iface(set), evt);
-
+	vTaskDelay(100 / portTICK_RATE_MS);
     ESP_LOGI(TAG, "[ 5 ] Start audio_pipeline");
+    
     audio_pipeline_run(pipeline);
     
   //   gpio_set_direction(get_green_led_gpio(), GPIO_MODE_OUTPUT);
@@ -516,50 +553,38 @@ void app_main(void)
      ESP_LOGW(TAG, "[ * ] *    Next station: <Play>");
      ESP_LOGW(TAG, "[ * ] * Presset station: <Set>");
      
-     
-
-     
-
- 
-
+	vTaskDelay(1000 / portTICK_RATE_MS);
     while (1) {
-		
-		
-		    
+	    
 		
         audio_event_iface_msg_t msg;
-                  
-  
         
-        esp_err_t ret = audio_event_iface_listen(evt, &msg, 100 / portTICK_RATE_MS); // portMAX_DELAY);
+  
+ static int dee = portMAX_DELAY;
+        
+        esp_err_t ret = audio_event_iface_listen(evt, &msg, dee); // portMAX_DELAY);
 
-        if (ret != ESP_OK) {
-			
-			  if (tune_request < RADIO_COUNT)
-		      { 
-				  tune_radio(tune_request);
-				  tune_request = 255;
-				  continue;
-			  } else
-			  {
-				tune_request = 255;
-            //ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
-            //gpio_set_level(get_green_led_gpio(), 0);
-            continue;
-		  }
-        } else gpio_set_level(get_green_led_gpio(), 1);
 
         if (msg.source_type == AUDIO_ELEMENT_TYPE_ELEMENT
             && msg.source == (void *) aac_decoder
             && msg.cmd == AEL_MSG_CMD_REPORT_MUSIC_INFO) {
+				
             audio_element_info_t music_info = {0};
             audio_element_getinfo(aac_decoder, &music_info);
-
-            ESP_LOGI(TAG, "[ * ] Receive music info from aac decoder, sample_rates=%d, bits=%d, ch=%d",
+                  
+                audio_element_setinfo(i2s_stream_writer, &music_info); 
+                alc_volume_setup_set_channel(alc_el, music_info.channels);
+				alc_volume_setup_set_volume(alc_el, ALC_VOLUME_SET);
+            
+             ESP_LOGI(TAG, "[ * ] Receive music info from aac decoder, sample_rates=%d, bits=%d, ch=%d",
                      music_info.sample_rates, music_info.bits, music_info.channels);
-
-            audio_element_setinfo(i2s_stream_writer, &music_info);
+                         	if (equalizer_set_info(equalizer, music_info.sample_rates, music_info.channels) != ESP_OK) {
+				ESP_LOGE(TAG, "[ * ] Equalizer set error ");
+                continue;
+            }
+                
             i2s_stream_set_clk(i2s_stream_writer, music_info.sample_rates, music_info.bits, music_info.channels);
+            dee = 100 / portTICK_RATE_MS;
             continue;
         }
 
@@ -577,7 +602,21 @@ void app_main(void)
             audio_pipeline_run(pipeline);
             continue;
         }
-        
+               if (ret != ESP_OK) {
+			
+			  if (tune_request < RADIO_COUNT)
+		      { 
+				  tune_radio(tune_request);
+				  tune_request = 255;
+				  continue;
+			  } else
+			  {
+				tune_request = 255;
+            //ESP_LOGE(TAG, "[ * ] Event interface error : %d", ret);
+            //gpio_set_level(get_green_led_gpio(), 0);
+            continue;
+		  }
+        } else gpio_set_level(get_green_led_gpio(), 1);
 		if ((int)msg.data == get_input_mode_id()) {
 
 			
@@ -587,13 +626,25 @@ void app_main(void)
 		}
 			if (msg.cmd == PERIPH_BUTTON_PRESSED){ 
 				ESP_LOGI(TAG, "PERIPH_BUTTON_MODE_PRESSED");
-
+				equalizer_set_gain_info(equalizer,f31Hz,8,1);
+				equalizer_set_gain_info(equalizer,f62Hz,3,1); 
+		        equalizer_set_gain_info(equalizer,f125Hz,1,1);
+		        equalizer_set_gain_info(equalizer,f250Hz,-2,1);
+		        equalizer_set_gain_info(equalizer,f500Hz,-8,1);
+		        equalizer_set_gain_info(equalizer,f1kHz,-10,1);
+		        equalizer_set_gain_info(equalizer,f2kHz,-8,1);
+		        equalizer_set_gain_info(equalizer,f4kHz,-7,1);
+		        equalizer_set_gain_info(equalizer,f8kHz,-7,1);
+		        equalizer_set_gain_info(equalizer,f16kHz,-6,1);
+		          ESP_LOGI(TAG, "Loudness ON");
+		          
 		continue;		
 	             
 		}
 			if ((msg.cmd == PERIPH_BUTTON_RELEASE) || (msg.cmd == PERIPH_BUTTON_LONG_RELEASE)){ 
 				ESP_LOGI(TAG, "PERIPH_BUTTON_MODE_RELEASED");
-		             
+
+		           
 		}
             continue;
         }
@@ -606,7 +657,17 @@ void app_main(void)
 		}
               if (msg.cmd == PERIPH_BUTTON_PRESSED){ 
 				ESP_LOGI(TAG, "PERIPH_BUTTON_REC_PRESSED");
-				
+				equalizer_set_gain_info(equalizer,0,-13,1); 
+		         equalizer_set_gain_info(equalizer,1,-13,1); 
+		         equalizer_set_gain_info(equalizer,2,-13,1);
+		         equalizer_set_gain_info(equalizer,3,-13,1);
+		             equalizer_set_gain_info(equalizer,4,-13,1); 
+		         equalizer_set_gain_info(equalizer,5,-13,1);
+		         equalizer_set_gain_info(equalizer,6,-13,1);
+		                equalizer_set_gain_info(equalizer,7,-13,1); 
+		         equalizer_set_gain_info(equalizer,8,-13,1);
+		         equalizer_set_gain_info(equalizer,9,-13,1);
+				 ESP_LOGI(TAG, "Loudness OFF");
 	
 		}
 		 	if  ((msg.cmd == PERIPH_BUTTON_RELEASE) || (msg.cmd == PERIPH_BUTTON_LONG_RELEASE)){ 
@@ -637,8 +698,8 @@ void app_main(void)
             } else 	if ((int) msg.data == get_input_set_id()) {
                 ESP_LOGI(TAG, "[ * ] [Set] touch tap event");
                 gpio_set_level(get_green_led_gpio(), 0);
-                					
-			tune_radio(PRESSET_RADIO);
+             radio_index=PRESSET_RADIO;   					
+			tune_radio(radio_index);
             continue;
 			
 			
@@ -651,8 +712,8 @@ void app_main(void)
                 if (player_volume > 100) {
                     player_volume = 100;
                 }
-                //disp_volume(player_volume);
-                disp_header(radio[((radio_index<<1)|1)]);
+                disp_volume(player_volume);
+                //disp_header(radio[((radio_index<<1)|1)]);
                 audio_hal_set_volume(board_handle->audio_hal, player_volume);
                 
                 ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
@@ -662,8 +723,8 @@ void app_main(void)
                 if (player_volume < 0) {
                     player_volume = 0;
                 }
-                 //disp_volume(player_volume);
-                 disp_header(radio[((radio_index<<1)|1)]);
+                disp_volume(player_volume);
+                 //disp_header(radio[((radio_index<<1)|1)]);
                 audio_hal_set_volume(board_handle->audio_hal, player_volume);
                
                 ESP_LOGI(TAG, "[ * ] Volume set to %d %%", player_volume);
