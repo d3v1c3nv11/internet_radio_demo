@@ -44,8 +44,6 @@ Use Touch buttons:
 Volume: Vol- Vol+
 Next station: <Play>
 Presset station: <Set>
-Loudness ON: <mode>
-Loudness OFF: <record>
 ```
 
 Note: Patch is required to es8388 driver in esp-adf to enable speakers. From project directory run
