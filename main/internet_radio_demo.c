@@ -452,6 +452,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "[2.5] Link it together http_stream-->aac_decoder-->equalizer-->i2s_stream-->[codec_chip]");
     audio_pipeline_link(pipeline, (const char *[]) {"http",  "aac", "equalizer","alc", "i2s"}, 5);
+    vTaskDelay(500 / portTICK_RATE_MS);
 #endif
 #ifdef FORMAT_MP3
     ESP_LOGI(TAG, "[2.3] Create mp3 decoder to decode mp3 file");
